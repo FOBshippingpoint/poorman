@@ -1,8 +1,6 @@
-#!/bin/sh
+. ./poorman.sh
 
-. poorman.sh
-
-# /// configurations ///
+# /// definitions ///
 
 BASE_URL=https://jsonplaceholder.typicode.com
 

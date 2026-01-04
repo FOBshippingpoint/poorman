@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Load the library
-. poorman.sh
+. ./poorman.sh
 
 # /// configurations ///
 BASE_URL=https://jsonplaceholder.typicode.com
