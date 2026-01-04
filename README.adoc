@@ -1,0 +1,314 @@
+= Poorman
+CC Lan
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
+:toc:
+
+A very limited alternative to Postman, powered by curl and POSIX shell.
+
+== Who is this for?
+
+Who want to send API requests without feeding the memory. And the one who familiar with shell.
+
+== Prerequisites
+
+-   Posix Shell (`dash`, `ksh`, `bash`, `zsh`, etc.)
+-   `https://curl.se/[curl]`
+
+// ## Installation
+
+// todo
+
+
+## Getting Started
+
+.  **Create a new script:** Copy `starter.sh` to a new file, for example, `my_api_tests.sh`.
++
+[source,sh]
+----
+cp starter.sh my_api.sh
+chmod +x my_api.sh
+----
+
+.  **Set the Base URL:** Edit `my_api_tests.sh` and change the `BASE_URL` variable to your target API's base URL.
++
+[source,sh]
+----
+BASE_URL=https://api.example.com
+----
+
+.  **Add Requests:** Add your API requests using the `GET`, `POST`, `PUT`, `PATCH`, `DELETE` requests. You can add any valid `curl` options after the *path*.
++
+[source,sh]
+----
+# Simple GET request
+GET /users/1
+
+# POST request with a JSON body
+POST /users --json '{"name": "New User"}'
+----
+
+.  **Run the script:** Execute your script from the terminal.
++
+[source,sh]
+----
+./my_api.sh
+----
+
+.  **Snapshot Responses:** You can add `Snapshot` after the request. Run the script again, and the response will be captured and embedded directly into the script. This allows you to "record" the server's response (like https://learning.postman.com/docs/sending-requests/response-data/examples/[Postman's example]).
++
+[source,sh]
+----
+GET /users/1
+Snapshot
+----
++
+After running the script, it will become:
++
+[source,sh]
+----
+GET /users/1
+: <<'RESULT'
+{
+  "id": 1,
+  "name": "Leanne Graham",
+  "username": "Bret",
+  ...
+}
+RESULT
+----
++
+[TIP]
+====
+The `:` is the shell builtin that almost do nothing. Combined with here-document (`<<'RESULT'`), we can have the comment without preceding `#`.
+====
+
+=== Example
+
+Here is a more complete example of an API script:
+
+```sh
+#!/bin/sh
+
+. ./poorman.sh
+
+# /// configurations ///
+
+BASE_URL=https://jsonplaceholder.typicode.com
+
+# /// curl options ///
+
+# Add global curl option
+CurlOption --url-query "postId=10"
+CurlOption --verbose
+
+# /// hooks ///
+
+AfterHook() {
+  printf '%s' "$1" | jq
+}
+
+# /// requests ///
+
+# This option only effect next request
+CurlOption Once --write-out "%{header_json}"
+
+# Get post by id
+postId=10
+GET /comments?postId=$postId
+
+# This line will replaced with the response body of previous request
+Snapshot
+
+# Create new post
+POST /posts --json "$(cat <<'PAYLOAD'
+{
+  "title": "poorman",
+  "body": "A very limited alternative to postman",
+  "userId": 1
+}
+PAYLOAD
+)"
+
+Snapshot
+
+# Get album's photo
+album=3
+Skip GET /albums/$album/photos
+
+# Alter user name
+userId=1
+PATCH /users/$userId --json '{"name": "John Doe"}'
+
+Snapshot
+```
+
+## Reference
+
+### Configuration
+
+**`BASE_URL`**
+The base URL for all requests. This variable must be set.
+
+[cols="1,1,1", options="header"]
+|===
+| Name | Description | Example
+
+| `BASE_URL`
+| The prefix of all request URLs. A trailing slash (`/`) is optional.
+| https://example.com
+|===
+
+### Request
+
+[cols="2,1,5", options="header"]
+|===
+| Method & Syntax | Description | Example
+
+| `GET <path> [curl_options...]`
+| Sends a GET request.
+a|
+[source,sh]
+----
+postId=1
+GET /posts/$postId
+----
+
+
+| `POST <path> [curl_options...]`
+| Sends a POST request.
+a|
+[source,sh]
+----
+POST /posts --verbose --json "$(cat <<'JSON'
+{
+  "id": 1,
+  "title": "foo",
+  "body": "bar",
+  "userId": 1
+}
+JSON
+)"
+----
+
+| `PUT <path> [curl_options...]`
+| Sends a PUT request.
+a|
+[source,sh]
+----
+PUT /posts/1 --json "$(cat <<'JSON'
+{
+  "id": 1,
+  "title": "foo",
+  "body": "bar",
+  "userId": 1
+}
+JSON
+)"
+)
+----
+
+| `PATCH <path> [curl_options...]`
+| Sends a PATCH request.
+a|
+[source,sh]
+----
+PATCH /albums/1/photos --json '{"date": 1767515098}'
+----
+
+| `DELETE <path> [curl_options...]`
+| Sends a DELETE request.
+a|
+[source,sh]
+----
+DELETE /posts --url-param 'user=1'
+----
+
+|===
+
+=== Modifier
+
+==== `CurlOption [Once] <curl_option>`
+Sets `curl` options. By default, options are global for all subsequent requests. Use `Once` to apply an option to the next request only.
+
+*Example:*
+[source,sh]
+----
+# This applies to all requests
+CurlOption --location
+
+# This applies only to the next GET request
+CurlOption Once --header "X-Custom-Header: value"
+GET /some/path
+----
+
+==== `Snapshot`
+
+Captures previous request result and replace itself.
+
+[source,sh]
+----
+GET /users/1
+Snapshot
+----
+
+After running the script, it will become:
+
+[source,sh]
+----
+GET /users/1
+: <<'RESULT'
+{
+  "id": 1,
+  "name": "Leanne Graham",
+  "username": "Bret"
+}
+RESULT
+----
+
+==== `Skip <request>`
+
+Skips the execution of a request.
+
+*Example:*
+[source,sh]
+----
+# This request will not be executed
+Skip GET /users/1
+----
+
+==== `Only <request>`
+
+When one or more `Only` requests are present in a script, only the requests wrapped by `Only` will be executed.
+
+*Example:*
+
+[source,sh]
+----
+Only GET /users/1                         # execute
+POST /users --json '{"name": "New User"}' # skipped
+Only DELETE /users/2                      # execute
+----
+
+=== Hooks
+
+==== `BeforeHook <command...>`
+A function that is executed before each request. The request arguments are passed to this function.
+
+==== `AfterHook <response_body>`
+A function that is executed after each request. The response body is passed as the first argument. This is useful for processing the response, for example, with `jq`.
+
+*Example:*
+[source,sh]
+----
+AfterHook() {
+  # Pretty-print JSON response using jq
+  printf '%s' "$1" | jq .
+}
+----
+
