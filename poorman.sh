@@ -1,6 +1,7 @@
 #!/bin/sh
 # vim: set expandtab tabstop=2 softtabstop=2 shiftwidth=2 :
 
+WRITE_OUT='__POORMAN_DELIM__%{json}__POORMAN_DELIM__%{header_json}'
 POORMAN_RUN_ONLY=
 trapped=
 snapshot_idx=0
@@ -41,25 +42,30 @@ quote() {
   eval "$1=\${q:-\"''\"}"
 }
 
+to_list() {
+  list=
+  for arg in "$@"; do
+    quote quoted "$arg"
+    list="$list $quoted"
+  done
+}
+
 fetch() {
-  _before_hook "$@"
+  _before_hook
   [ "${POORMAN_RUN_ONLY:-}" ] && [ "${dont_run:-}" ] && return
   request=$1 path=$2
   shift 2
-  if [ "${global_opts:-}" ] || [ "${once_opts:-}" ]; then
-    stat='set --'
-    for arg in "$@"; do
-      quote quoted "$arg"
-      # shellcheck disable=SC2154
-      stat="$stat $quoted"
-    done
-    stat="$stat ${global_opts:-} ${once_opts:-}"
-    eval "$stat"
+  to_list "$@"
+  eval "set -- ${list:-} ${global_opts:-} ${once_opts:-}"
+  [ "${BASE_URL:-}" ] && BASE_URL="${BASE_URL%/}/"
+  set -- curl -X "$request" --write-out "$WRITE_OUT" "$@" "${BASE_URL:-}${path#/}"
+  if [ "${DRY_RUN:-}" ]; then 
+    IFS=" $IFS"
+    printf '%s\n\n' "$*"
+    IFS=${IFS#?}
+  else
+    _after_hook "$("$@")"
   fi
-  last_result=$(curl --request "$request" "$@" "${BASE_URL%/}/${path#/}")
-  eval "snapshot_$snapshot_idx=\$last_result"
-  snapshot_idx=$((snapshot_idx + 1))
-  _after_hook "$last_result"
 }
 
 GET() { fetch GET "$@"; }
@@ -97,25 +103,33 @@ CurlOption() {
 }
 
 Snapshot() {
-  [ "${trapped:-}" ] || {
+  if [ ! "${trapped:-}" ]; then
     trap _self_replace EXIT
     trapped=1
-  }
+  fi
 }
 
 BeforeHook() { :; }
 AfterHook() { :; }
+
 _before_hook() {
-  [ "${BASE_URL:-}" ] || {
-    echo '[ BASE_URL ] not set'
-    exit 1
-  }
-  BeforeHook "$@"
+  BeforeHook
 }
+
 _after_hook() {
-  AfterHook "$@"
+  result=$1
+  BODY=${result%%__POORMAN_DELIM__*}
+  result=${result#*__POORMAN_DELIM__}
+  META_JSON=${result%%__POORMAN_DELIM__*}
+  result=${result#*__POORMAN_DELIM__}
+  HEADER_JSON=$result # last one
+  RESULT=$BODY
+  AfterHook
+  eval "snapshot_$snapshot_idx=\$RESULT"
+  snapshot_idx=$((snapshot_idx + 1))
   once_opts=
 }
+
 _self_replace() {
   new_content=
   snapshot_idx=0
@@ -137,3 +151,17 @@ $line"
   done <"$0"
   printf '%s' "$new_content" >"$0"
 }
+
+# AfterHook() {
+#   # last_result=$(printf '%s' "$last_json" | jq '.http_code')
+#   RESULT="$(jq --null-input --raw-output --argjson selected '[ "content-type", "date", "http_code", "method", "time_total", "size_download", "url_effective" ]' --argjson meta "$META_JSON" --argjson header "$HEADER_JSON" '
+#   $meta + $header
+#   | to_entries 
+#   | map(select(.key | IN($selected[])))
+#   | (map(.key | length) | max) as $max_len 
+#   | .[] 
+#   | .key + (" " * ($max_len - (.key | length) + 4)) + ([.value] | flatten | join(" "))
+#   ')
+# -------------------------
+# $BODY"
+# }
