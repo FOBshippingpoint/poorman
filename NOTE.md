@@ -1,1 +1,3 @@
 - [ ] Add tests
+- [ ] Add installation script
+- [ ] Add examples for different scenarios

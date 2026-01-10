@@ -9,7 +9,7 @@ ifdef::env-github[]
 endif::[]
 :toc:
 
-A very limited alternative to Postman, powered by curl and POSIX shell.
+> A very limited alternative to Postman, powered by curl and POSIX shell.
 
 == Who is this for?
 
@@ -17,8 +17,14 @@ Who want to send API requests without feeding the memory. And the one who famili
 
 == Prerequisites
 
--   Posix Shell (`dash`, `ksh`, `bash`, `zsh`, etc.)
--   `https://curl.se/[curl]`
+- Posix Shell (`dash`, `ksh`, `bash`, `zsh`, etc.)
+- `https://curl.se/[curl]`
+- `https://jqlang.org/[jq]` (Optional)
++
+[NOTE]
+====
+If `jq` is installed, Poorman will generate "Rich Snapshots" that include HTTP status codes, timing, and headers alongside the JSON body.
+====
 
 // ## Installation
 
@@ -27,11 +33,11 @@ Who want to send API requests without feeding the memory. And the one who famili
 
 ## Getting Started
 
-.  **Create a new script:** Copy `starter.sh` to a new file, for example, `my_api_tests.sh`.
+.  **Create a new script:** Copy `sample.sh` to a new file, for example, `my_api_tests.sh`.
 +
 [source,sh]
 ----
-cp starter.sh my_api.sh
+cp sample.sh my_api.sh
 chmod +x my_api.sh
 ----
 
@@ -73,19 +79,26 @@ After running the script, it will become:
 [source,sh]
 ----
 GET /users/1
-: <<'RESULT'
+: <<'SNAPSHOT'
+http_code        200
+method           GET
+size_download    509
+time_total       0.479236
+url_effective    https://jsonplaceholder.typicode.com/users/1
+date             Sat, 10 Jan 2026 07:33:15 GMT
+content-type     application/json; charset=utf-8
+-------------------------
 {
   "id": 1,
   "name": "Leanne Graham",
-  "username": "Bret",
-  ...
+  "username": "Bret"
 }
-RESULT
+SNAPSHOT
 ----
 +
 [TIP]
 ====
-The `:` is the shell builtin that almost do nothing. Combined with here-document (`<<'RESULT'`), we can have the comment without preceding `#`.
+The `:` is the shell builtin that almost do nothing. Combined with here-document (`<<'SNAPSHOT'`), we can have the comment without preceding `#`.
 ====
 
 === Example
@@ -99,34 +112,57 @@ Here is a more complete example of an API script:
 
 # /// configurations ///
 
+# Base URL of each requests. Trailing slash is optional.
 BASE_URL=https://jsonplaceholder.typicode.com
+# Set to 1 if you only want to run requests starts with "Only"
+ONLY=
+# Set to 1 if you want to see the actual curl commands
+DRY_RUN=
 
 # /// curl options ///
 
 # Add global curl option
-CurlOption --url-query "postId=10"
-CurlOption --verbose
+CurlOptionGlobal --location
 
 # /// hooks ///
 
 AfterHook() {
-  printf '%s' "$1" | jq
+  # Prints response body for every request
+  printf '%s' "$BODY"
 }
 
 # /// requests ///
 
-# This option only effect next request
-CurlOption Once --write-out "%{header_json}"
+# Add option that only affect next request
+CurlOptionOnce --user admin:password
 
 # Get post by id
-postId=10
-GET /comments?postId=$postId
-
+commentId=1
+GET /comments/$commentId
 # This line will replaced with the response body of previous request
 Snapshot
+# Like this:
+# : <<'SNAPSHOT'
+# http_code        200
+# method           GET
+# size_download    268
+# time_total       0.411915
+# url_effective    https://jsonplaceholder.typicode.com/comments/1
+# date             Sat, 10 Jan 2026 10:23:10 GMT
+# content-type     application/json; charset=utf-8
+# -------------------------
+# {
+#   "postId": 1,
+#   "id": 1,
+#   "name": "id labore ex et quam laborum",
+#   "email": "Eliseo@gardner.biz",
+#   "body": "laudantium enim quasi est quidem magnam voluptate ipsam eos\ntempora quo necessitatibus\ndolor quam autem quasi\nreiciendis et nam sapiente accusantium"
+# }
+# SNAPSHOT
 
 # Create new post
-POST /posts --json "$(cat <<'PAYLOAD'
+POST /posts --json "$(
+  cat <<'PAYLOAD'
 {
   "title": "poorman",
   "body": "A very limited alternative to postman",
@@ -134,26 +170,21 @@ POST /posts --json "$(cat <<'PAYLOAD'
 }
 PAYLOAD
 )"
-
 Snapshot
 
-# Get album's photo
+# [SKIP] Get album's photo
 album=3
 Skip GET /albums/$album/photos
 
 # Alter user name
 userId=1
 PATCH /users/$userId --json '{"name": "John Doe"}'
-
 Snapshot
 ```
 
 ## Reference
 
 ### Configuration
-
-**`BASE_URL`**
-The base URL for all requests. This variable must be set.
 
 [cols="1,1,1", options="header"]
 |===
@@ -162,6 +193,15 @@ The base URL for all requests. This variable must be set.
 | `BASE_URL`
 | The prefix of all request URLs. A trailing slash (`/`) is optional.
 | https://example.com
+
+| `DRY_RUN`
+| Set to `1` to print the enabled request commands.
+| 0/1
+
+| `ONLY`
+| Set to `1` to only run the requests starts with `Only`.
+| 0/1
+
 |===
 
 ### Request
@@ -210,7 +250,6 @@ PUT /posts/1 --json "$(cat <<'JSON'
 }
 JSON
 )"
-)
 ----
 
 | `PATCH <path> [curl_options...]`
@@ -231,19 +270,48 @@ DELETE /posts --url-param 'user=1'
 
 |===
 
+#### Variables
+
+[cols="1,2", options="header"]
+|===
+| Name | Description
+
+| `BODY`
+| The response body of latest request.
+
+| `META_JSON`
+| All curl write-out variables in json format of latest request. (`%{json}`)
+
+| `HEADER_JSON`
+| curl write-out headers in json format of latest request. (`%{header_json}`)
+
+| `SNAPSHOT`
+| The content that will be used for constructing `Snapshot`. Set `SNAPSHOT` to create custom snapshots in `AfterHook`.
+
+|===
+
+
 === Modifier
 
-==== `CurlOption [Once] <curl_option>`
-Sets `curl` options. By default, options are global for all subsequent requests. Use `Once` to apply an option to the next request only.
+==== `CurlOptionOnce <curl_option...>`
+Sets `curl` options for the next request only.
 
 *Example:*
 [source,sh]
 ----
-# This applies to all requests
-CurlOption --location
-
 # This applies only to the next GET request
-CurlOption Once --header "X-Custom-Header: value"
+CurlOptionOnce --header "X-Custom-Header: value"
+GET /some/path
+----
+
+==== `CurlOptionGlobal <curl_option...>`
+Sets `curl` options for all subsequent requests.
+
+*Example:*
+[source,sh]
+----
+# This applies to all subsequent requests
+CurlOptionGlobal --location
 GET /some/path
 ----
 
@@ -262,13 +330,21 @@ After running the script, it will become:
 [source,sh]
 ----
 GET /users/1
-: <<'RESULT'
+: <<'SNAPSHOT'
+http_code        200
+method           GET
+size_download    509
+time_total       0.479236
+url_effective    https://jsonplaceholder.typicode.com/users/1
+date             Sat, 10 Jan 2026 07:33:15 GMT
+content-type     application/json; charset=utf-8
+-------------------------
 {
   "id": 1,
   "name": "Leanne Graham",
   "username": "Bret"
 }
-RESULT
+SNAPSHOT
 ----
 
 ==== `Skip <request>`
@@ -284,31 +360,39 @@ Skip GET /users/1
 
 ==== `Only <request>`
 
-When one or more `Only` requests are present in a script, only the requests wrapped by `Only` will be executed.
+With `ONLY=1` environment variable set. Only the requests wrapped by `Only` will be executed.
 
 *Example:*
 
 [source,sh]
 ----
+ONLY=1
 Only GET /users/1                         # execute
 POST /users --json '{"name": "New User"}' # skipped
 Only DELETE /users/2                      # execute
 ----
 
-=== Hooks
+[source,sh]
+----
+Only GET /users/1                         # execute
+POST /users --json '{"name": "New User"}' # execute, since ONLY is not equal to 1
+Only DELETE /users/2                      # execute
+----
 
-==== `BeforeHook <command...>`
-A function that is executed before each request. The request arguments are passed to this function.
+=== Hook
 
-==== `AfterHook <response_body>`
-A function that is executed after each request. The response body is passed as the first argument. This is useful for processing the response, for example, with `jq`.
+==== `BeforeHook`
+A function that is executed before each enabled request.
+
+==== `AfterHook`
+A function that is executed after each enabled request. This is useful for processing the response, for example, pretty print only the response body with `jq`.
 
 *Example:*
 [source,sh]
 ----
 AfterHook() {
   # Pretty-print JSON response using jq
-  printf '%s' "$1" | jq .
+  jq -n --argjson body "$BODY" '$body'
 }
 ----
 
