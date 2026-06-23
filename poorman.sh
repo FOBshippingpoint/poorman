@@ -7,9 +7,9 @@
 # @author CC Lan
 
 WRITE_OUT='__POORMAN_DELIM__%{json}__POORMAN_DELIM__%{header_json}'
-trapped=
-req_id=0
-skip=
+_trapped=
+_req_id=0
+_skip=
 
 # Prints message to stderr
 #
@@ -32,33 +32,33 @@ die() {
 }
 
 # Check dependencies
-# Will set "has_$dep" to 1 if satisfied, or empty if not.
+# Will set "_has_<dep>" to 1 if satisfied, or empty if not.
 #
 # <<'EXAMPLE'
 # _check_deps curl=required jq=optional
-# # has_curl=1 and has_jq=1
+# # _has_curl=1 and _has_jq=1
 # EXAMPLE
 # 
 # $@ {str}? dep_description - In dep=[optional|required] format
 # @return 0 - if all required dependencies are satisfied.
 _check_deps() {
-  failed=
-  for arg in "$@"; do
-    dep=${arg%=*}
-    req=${arg#*=}
-    if type "$dep" >/dev/null 2>&1; then
-      eval "has_$dep=1"
+  _failed=
+  for _arg in "$@"; do
+    _dep=${_arg%=*}
+    _req=${_arg#*=}
+    if type "$_dep" >/dev/null 2>&1; then
+      eval "_has_$_dep=1"
     else
-      unset "has_$dep"
-      case $req in
+      unset "_has_$_dep"
+      case $_req in
         required)
-          failed=1
-          msg "[ $arg ] is required."
+          _failed=1
+          msg "[ $_arg ] is required."
         ;;
       esac
     fi
   done
-  [ "${failed:-}" ] && die || return
+  [ "${_failed:-}" ] && die || return
 }
 _check_deps 'curl=required' 'jq=optional'
 
@@ -66,8 +66,8 @@ _check_deps 'curl=required' 'jq=optional'
 # Under License: Creative Commons Zero v1.0 Universal
 #
 # <<'EXAMPLE'
-# quote quoted '@#$%!@"~''\''
-# echo "$quoted"
+# quote _quoted '@#$%!@"~''\''
+# echo "$_quoted"
 # '@#$%!@"~'\'
 # EXAMPLE
 #
@@ -75,37 +75,37 @@ _check_deps 'curl=required' 'jq=optional'
 # $2 {str} to_quote - string to quote
 # @see https://github.com/ko1nksm/getoptions/blob/master/lib/getoptions_base.sh
 quote() {
-  q="$2'" r=""
-  while [ "$q" ]; do r="$r${q%%\'*}'\''" && q=${q#*\'}; done
-  q="'${r%????}'" && q=${q#\'\'} && q=${q%\'\'}
-  eval "$1=\${q:-\"''\"}"
+  _q="$2'" _r=""
+  while [ "$_q" ]; do _r="$_r${_q%%\'*}'\''" && _q=${_q#*\'}; done
+  _q="'${_r%????}'" && _q=${_q#\'\'} && _q=${_q%\'\'}
+  eval "$1=\${_q:-\"''\"}"
 }
 
-# Save args as string to variable $list
+# Save args as string to variable $_list
 #
-# @set {str} list - quoted string for eval "set -- $list"
+# @set {str} _list - quoted string for eval "set -- $_list"
 to_list() {
-  list=
-  for arg in "$@"; do
-    quote quoted "$arg"
+  _list=
+  for _arg in "$@"; do
+    quote _quoted "$_arg"
     # shellcheck disable=SC2154
-    list="$list $quoted"
+    _list="$_list $_quoted"
   done
 }
 
 # Safely quote complex arguments into list
 #
-# @set {str} list - quoted string for eval "set -- $list"
+# @set {str} _list - quoted string for eval "set -- $_list"
 to_list_quote_complex() {
-  list=
-  for w in "$@"; do
-    case $w in
+  _list=
+  for _w in "$@"; do
+    case $_w in
       *[!a-zA-Z0-9_-]*)
-        quote quoted "$w"
-        list="$list $quoted"
+        quote _quoted "$_w"
+        _list="$_list $_quoted"
         ;;
       *)
-        list="$list $w"
+        _list="$_list $_w"
         ;;
     esac
   done
@@ -116,30 +116,30 @@ to_list_quote_complex() {
 # $1 {GET|POST|PUT|PATCH|DELETE} request - request method
 # $2 {str} path - path of URL. e.g., /users/1
 # @need {1|any} ONLY - is current script run in ONLY mode?
-# @need {1|any} only - is current request mark as "Only"
+# @need {1|any} _only - is current request mark as "Only"
 # @need {str}? BASE_URL - base URL of the request
 # @need {str} WRITE_OUT - curl write out
 # @need {1|any} DRY_RUN - is current script run in DRY_RUN mode? Prints curl commands if DRY_RUN=1
 # @internal
 _fetch() {
-  if [ "${ONLY:-}" = 1 ] && [ ! "${only:-}" ]; then
-    once_opts=
+  if [ "${ONLY:-}" = 1 ] && [ ! "${_only:-}" ]; then
+    _once_opts=
     return
   fi
-  if [ "${skip:-}" ]; then
-    once_opts=
+  if [ "${_skip:-}" ]; then
+    _once_opts=
     return
   fi
   _before_hook
-  request=$1 path=$2
+  _request=$1 _path=$2
   shift 2
   to_list "$@"
-  eval "set -- ${list:-} ${global_opts:-} ${once_opts:-}"
+  eval "set -- ${_list:-} ${_global_opts:-} ${_once_opts:-}"
   [ "${BASE_URL:-}" ] && BASE_URL="${BASE_URL%/}/"
-  set -- curl -X "$request" --write-out "$WRITE_OUT" "$@" "${BASE_URL:-}${path#/}"
+  set -- curl -X "$_request" --write-out "$WRITE_OUT" "$@" "${BASE_URL:-}${_path#/}"
   if [ "${DRY_RUN:-}" = 1 ]; then
     quote_complex_only "$@"
-    printf '%s' "${list#?}"
+    printf '%s' "${_list#?}"
   else
     _after_hook "$("$@")"
   fi
@@ -159,7 +159,7 @@ Skip() {
     GET|POST|PUT|PATCH|DELETE) ;;
     *) die "[ Skip $1 ... ] is invalid, expecting GET|POST|PUT|PATCH|DELETE";;
   esac
-  skip=1 "$@"
+  _skip=1 "$@"
 }
 # Only run the request
 #
@@ -171,10 +171,10 @@ Only() {
     *) die "[ Only $1 ... ] is invalid, expecting GET|POST|PUT|PATCH|DELETE";;
   esac
   if [ "${ONLY:-}" = 1 ]; then
-    only=1 "$@"
+    _only=1 "$@"
   else
     # shellcheck disable=SC1007
-    only= "$@"
+    _only= "$@"
   fi
 }
 
@@ -182,31 +182,31 @@ Only() {
 #
 # $@ {any} curl_options - options passed to curl as is
 CurlOptionGlobal() {
-  for opt in "$@"; do
-    quote quoted "$opt"
-    global_opts="${global_opts:-} ${quoted:-}"
+  for _opt in "$@"; do
+    quote _quoted "$_opt"
+    _global_opts="${_global_opts:-} ${_quoted:-}"
   done
 }
 # Add curl options for the next request
 #
 # $@ {any} curl_options - options passed to curl as is
 CurlOptionOnce() {
-  for opt in "$@"; do
-    quote quoted "$opt"
-    once_opts="${once_opts:-} ${quoted:-}"
+  for _opt in "$@"; do
+    quote _quoted "$_opt"
+    _once_opts="${_once_opts:-} ${_quoted:-}"
   done
 }
 
 # Enable trap _self_replace on exit
 #
-# @set {int} req_id - req_id + 1
+# @set {int} _req_id - _req_id + 1
 Snapshot() {
-  if [ ! "${trapped:-}" ]; then
+  if [ ! "${_trapped:-}" ]; then
     trap _self_replace EXIT
-    trapped=1
+    _trapped=1
   fi
-  eval "snapshot_$req_id=\$SNAPSHOT"
-  req_id=$((req_id + 1)) # increase count every single call and ignoring Skip/Only in order to sync with _self_replace
+  eval "_snapshot_$_req_id=\$SNAPSHOT"
+  _req_id=$((_req_id + 1)) # increase count every single call and ignoring Skip/Only in order to sync with _self_replace
 }
 
 # Hook before each request
@@ -241,28 +241,28 @@ _before_hook() {
 #
 # $1 {str} response - response from previous request
 _after_hook() {
-  result=${1:-}
-  if [ "$result" = '' ]; then
+  _result=${1:-}
+  if [ "$_result" = '' ]; then
     EMPTY_RESULT=1
   else
     # shellcheck disable=SC2034
     EMPTY_RESULT=0
   fi
-  case $result in
+  case $_result in
     *__POORMAN_DELIM__*)
-      BODY=${result%%__POORMAN_DELIM__*}
-      result=${result#*__POORMAN_DELIM__}
-      META_JSON=${result%%__POORMAN_DELIM__*}
-      result=${result#*__POORMAN_DELIM__}
-      HEADER_JSON=$result # last one, no need to cut
+      BODY=${_result%%__POORMAN_DELIM__*}
+      _result=${_result#*__POORMAN_DELIM__}
+      META_JSON=${_result%%__POORMAN_DELIM__*}
+      _result=${_result#*__POORMAN_DELIM__}
+      HEADER_JSON=$_result # last one, no need to cut
       SNAPSHOT=$BODY
       ;;
     *)
       # shellcheck disable=SC2034
-      SNAPSHOT=$result
+      SNAPSHOT=$_result
       ;;
   esac
-  if [ "${has_jq:-}" ] && [ "${META_JSON:-}" ] && [ "${HEADER_JSON:-}" ]; then
+  if [ "${_has_jq:-}" ] && [ "${META_JSON:-}" ] && [ "${HEADER_JSON:-}" ]; then
     _std_jq_after_hook
   fi
   AfterHook
@@ -270,29 +270,28 @@ _after_hook() {
 
 # Trap function that injects all "Snapshot" to the script file
 _self_replace() {
-  new_content=
-  req_id=0
-  while IFS= read -r line; do
-    case $line in
+  _new_content=
+  _req_id=0
+  while IFS= read -r _line; do
+    case $_line in
     Snapshot)
-      eval "snapshot=\$snapshot_$req_id"
-      if [ "${snapshot:-}" ]; then
-        new_content="$new_content
+      eval "_snapshot=\$_snapshot_$_req_id"
+      if [ "${_snapshot:-}" ]; then
+        _new_content="$_new_content
 : <<'SNAPSHOT'
-${snapshot:-}
+${_snapshot:-}
 SNAPSHOT"
       else
-        new_content="$new_content
-$line"
+        _new_content="$_new_content
+$_line"
       fi
-      req_id=$((req_id + 1))
+      _req_id=$((_req_id + 1))
       ;;
     *)
-      new_content="$new_content
-$line"
+      _new_content="$_new_content
+$_line"
       ;;
     esac
   done <"$0"
-  printf '%s' "$new_content" >"$0"
+  printf '%s' "$_new_content" >"$0"
 }
-
