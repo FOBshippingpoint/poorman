@@ -3,10 +3,11 @@
 
 # @name Poorman
 # @description A very limited alternative to Postman, powered by curl and POSIX shell.
-# @version 0.1
+# @version 0.1.1
 # @author CC Lan
 
-WRITE_OUT='__POORMAN_DELIM__%{json}__POORMAN_DELIM__%{header_json}'
+POORMAN_DELIM='__POORMAN_DELIM__'
+WRITE_OUT="$POORMAN_DELIM%{json}$POORMAN_DELIM%{header_json}"
 _trapped=
 _req_id=0
 _skip=
@@ -31,6 +32,54 @@ die() {
   exit "${2:-1}"
 }
 
+usage() {
+  cat <<'USAGE'
+Poorman - a very limited alternative to Postman, powered by curl and POSIX shell.
+
+Full doc see: https://github.com/FOBshippingpoint/poorman 
+
+Usage:
+  . ./poorman.sh
+  ./poorman.sh [options]
+
+Options:
+  -h, --help            Print this help
+
+Config:
+  BASE_URL=https://example.com
+  DRY_RUN=1             Print curl commands instead of running requests
+  ONLY=1                Run only requests wrapped by Only
+
+Requests:
+  GET endpoint [curl_options...]
+  POST endpoint [curl_options...]
+  PUT endpoint [curl_options...]
+  PATCH endpoint [curl_options...]
+  DELETE endpoint [curl_options...]
+
+Modifiers:
+  CurlOptionGlobal [curl_options...]  Add curl options for subsequent requests
+  CurlOptionOnce [curl_options...]    Add curl options for the next request only
+  Skip request...                     Skip one request
+  Only request...                     Run request only when ONLY=1
+  Snapshot                            Replace itself with the latest snapshot on exit
+
+Hooks:
+  BeforeHook            Override to run before each enabled request
+  AfterHook             Override to run after each enabled request
+
+Examples Script:
+  # example.sh
+  . ./poorman.sh
+  BASE_URL=https://jsonplaceholder.typicode.com
+  CurlOptionGlobal --location
+  GET /posts/1
+  Snapshot
+
+  DRY_RUN=1 GET /users/1 --header 'Accept: application/json'
+USAGE
+}
+
 # Check dependencies
 # Will set "_has_<dep>" to 1 if satisfied, or empty if not.
 #
@@ -53,12 +102,13 @@ _check_deps() {
       case $_req in
         required)
           _failed=1
-          msg "[ $_arg ] is required."
+          msg "[ $_dep ] is required."
         ;;
       esac
     fi
   done
-  [ "${_failed:-}" ] && die || return
+  [ "${_failed:-}" ] && die
+  return 0
 }
 _check_deps 'curl=required' 'jq=optional'
 
@@ -122,6 +172,7 @@ to_list_quote_complex() {
 # @need {1|any} DRY_RUN - is current script run in DRY_RUN mode? Prints curl commands if DRY_RUN=1
 # @internal
 _fetch() {
+  SNAPSHOT=
   if [ "${ONLY:-}" = 1 ] && [ ! "${_only:-}" ]; then
     _once_opts=
     return
@@ -135,11 +186,12 @@ _fetch() {
   shift 2
   to_list "$@"
   eval "set -- ${_list:-} ${_global_opts:-} ${_once_opts:-}"
+  _once_opts=
   [ "${BASE_URL:-}" ] && BASE_URL="${BASE_URL%/}/"
   set -- curl -X "$_request" --write-out "$WRITE_OUT" "$@" "${BASE_URL:-}${_path#/}"
   if [ "${DRY_RUN:-}" = 1 ]; then
-    quote_complex_only "$@"
-    printf '%s' "${_list#?}"
+    to_list_quote_complex "$@"
+    printf '%s\n' "${_list#?}"
   else
     _after_hook "$("$@")"
   fi
@@ -155,26 +207,33 @@ DELETE() { _fetch DELETE "$@"; }
 #
 # $@ {any} request_command - the request command starts with GET|POST|PUT|PATCH|DELETE
 Skip() { 
-  case $1 in
-    GET|POST|PUT|PATCH|DELETE) ;;
-    *) die "[ Skip $1 ... ] is invalid, expecting GET|POST|PUT|PATCH|DELETE";;
+  case ${1:-} in
+    GET|POST|PUT|PATCH|DELETE|Only) ;;
+    *) die "[ Skip ${1:-} ... ] is invalid, expecting GET|POST|PUT|PATCH|DELETE";;
   esac
-  _skip=1 "$@"
+  _skip=1
+  "$@"
+  _status=$?
+  _skip=
+  return "$_status"
 }
 # Only run the request
 #
 # $@ {any} request_command - the request command starts with GET|POST|PUT|PATCH|DELETE
 # @need {1|any} ONLY - Only works when $ONLY = 1
 Only() {
-  case $1 in
-    GET|POST|PUT|PATCH|DELETE) ;;
-    *) die "[ Only $1 ... ] is invalid, expecting GET|POST|PUT|PATCH|DELETE";;
+  case ${1:-} in
+    GET|POST|PUT|PATCH|DELETE|Skip) ;;
+    *) die "[ Only ${1:-} ... ] is invalid, expecting GET|POST|PUT|PATCH|DELETE";;
   esac
   if [ "${ONLY:-}" = 1 ]; then
-    _only=1 "$@"
+    _only=1
+    "$@"
+    _status=$?
+    _only=
+    return "$_status"
   else
-    # shellcheck disable=SC1007
-    _only= "$@"
+    "$@"
   fi
 }
 
@@ -197,16 +256,16 @@ CurlOptionOnce() {
   done
 }
 
-# Enable trap _self_replace on exit
+# Enable snapshot replacement on exit
 #
 # @set {int} _req_id - _req_id + 1
 Snapshot() {
   if [ ! "${_trapped:-}" ]; then
-    trap _self_replace EXIT
+    trap '_replace_snapshots "$0"' EXIT
     _trapped=1
   fi
-  eval "_snapshot_$_req_id=\$SNAPSHOT"
-  _req_id=$((_req_id + 1)) # increase count every single call and ignoring Skip/Only in order to sync with _self_replace
+  eval "_snapshot_$_req_id=\${SNAPSHOT:-}"
+  _req_id=$((_req_id + 1)) # increase count every single call and ignoring Skip/Only in order to sync with _replace_snapshots
 }
 
 # Hook before each request
@@ -249,11 +308,11 @@ _after_hook() {
     EMPTY_RESULT=0
   fi
   case $_result in
-    *__POORMAN_DELIM__*)
-      BODY=${_result%%__POORMAN_DELIM__*}
-      _result=${_result#*__POORMAN_DELIM__}
-      META_JSON=${_result%%__POORMAN_DELIM__*}
-      _result=${_result#*__POORMAN_DELIM__}
+    *"$POORMAN_DELIM"*)
+      BODY=${_result%%"$POORMAN_DELIM"*}
+      _result=${_result#*"$POORMAN_DELIM"}
+      META_JSON=${_result%%"$POORMAN_DELIM"*}
+      _result=${_result#*"$POORMAN_DELIM"}
       HEADER_JSON=$_result # last one, no need to cut
       SNAPSHOT=$BODY
       ;;
@@ -268,30 +327,61 @@ _after_hook() {
   AfterHook
 }
 
-# Trap function that injects all "Snapshot" to the script file
-_self_replace() {
+# Replace Snapshot placeholders in a script file
+#
+# $1 {path} target - script file to rewrite, defaults to $0
+_replace_snapshots() {
+  _target=$1
   _new_content=
+  _first_line=1
   _req_id=0
-  while IFS= read -r _line; do
+  if [ ! -w "$_target" ]; then
+    msg "WARN: [ $_target ] is not writable"
+    return
+  fi
+  while IFS= read -r _line || [ "$_line" ]; do
     case $_line in
     Snapshot)
-      eval "_snapshot=\$_snapshot_$_req_id"
+      eval "_snapshot=\${_snapshot_$_req_id:-}"
       if [ "${_snapshot:-}" ]; then
-        _new_content="$_new_content
-: <<'SNAPSHOT'
+        _block=": <<'SNAPSHOT'
 ${_snapshot:-}
 SNAPSHOT"
       else
-        _new_content="$_new_content
-$_line"
+        _block=$_line
       fi
       _req_id=$((_req_id + 1))
       ;;
     *)
-      _new_content="$_new_content
-$_line"
+      _block=$_line
       ;;
     esac
-  done <"$0"
-  printf '%s' "$_new_content" >"$0"
+    if [ "$_first_line" ]; then
+      _new_content=$_block
+      _first_line=
+    else
+      _new_content="$_new_content
+$_block"
+    fi
+  done <"$_target"
+  printf '%s\n' "$_new_content" >"$_target"
 }
+
+# If not sourced, print help
+if [ ! "${__SOURCED__:-}" ]; then
+  case ${ZSH_EVAL_CONTEXT:-} in
+    *:file*) ;;
+    *)
+      case ${0##*/} in
+        poorman.sh)
+          case ${1:-} in
+            '' | -h | --help)
+              usage
+              exit 0
+              ;;
+          esac
+          ;;
+      esac
+      ;;
+  esac
+fi

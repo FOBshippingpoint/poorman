@@ -10,15 +10,16 @@ help: ## Show this help
 
 .PHONY: lint
 lint: ## Run shellcheck
-	shellcheck poorman.sh
+	shellcheck poorman.sh sample.sh spec/*.sh
 
-# .PHONY: unit
-# unit: ## Run unit test with shellspec
-# 	if type dash; then shellspec -s dash; fi
-# 	if type bash; then shellspec -s bash; fi
-# 	if type busybox; then shellspec -s 'busybox ash'; fi
-# 	if type ksh; then shellspec -s ksh; fi
-# 	if type zsh; then shellspec -s zsh; fi
+.PHONY: unit
+unit: ## Run unit test with shellspec
+	if type sh; then shellspec -s sh; fi
+	if type dash; then shellspec -s dash; fi
+	if type bash; then shellspec -s bash; fi
+	if type busybox; then shellspec -s 'busybox ash'; fi
+	if type ksh; then shellspec -s ksh; fi
+	if type zsh; then shellspec -s zsh; fi
 
 .PHONY: format
 format: ## Format code
