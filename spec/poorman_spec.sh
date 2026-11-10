@@ -27,6 +27,66 @@ SCRIPT
       The status should be success
       The output should include "Usage:"
     End
+
+    It "runs a script file passed as an argument and updates its Snapshot"
+      poorman_path=$PWD/poorman.sh
+      script=$(make_temp_script arg_run <<SCRIPT
+. "$poorman_path"
+curl() {
+  printf 'arg body%s{"http_code":200}%s{}' "\$POORMAN_DELIM" "\$POORMAN_DELIM"
+}
+_has_jq=
+GET /users/1
+Snapshot
+SCRIPT
+)
+
+      When run script ./poorman.sh "$script"
+      The status should be success
+      The contents of file "$script" should include "Snapshot <<'SNAPSHOT'"
+      The contents of file "$script" should include "arg body"
+    End
+
+    It "runs a script from stdin and outputs rewritten content when Snapshot is used"
+      script=$(make_temp_script stdin_src <<'SCRIPT'
+curl() {
+  printf 'piped body%s{"http_code":200}%s{}' "$POORMAN_DELIM" "$POORMAN_DELIM"
+}
+_has_jq=
+GET /users/1
+Snapshot
+SCRIPT
+)
+
+      When run sh -c "./poorman.sh < \"$script\""
+      The status should be success
+      The output should include "GET /users/1"
+      The output should include "Snapshot <<'SNAPSHOT'"
+      The output should include "piped body"
+    End
+
+    It "runs a script from stdin without echoing script when Snapshot is not used"
+      script=$(make_temp_script stdin_no_snap <<'SCRIPT'
+DRY_RUN=1
+GET /users/1
+SCRIPT
+)
+
+      When run sh -c "./poorman.sh < \"$script\""
+      The status should be success
+      The output should equal "curl -X GET --write-out '$WRITE_OUT' 'users/1'"
+    End
+
+    Parameters
+      "-v"
+      "--version"
+    End
+
+    It "prints version when executed directly with $1"
+      When run script ./poorman.sh "$1"
+      The status should be success
+      The output should equal "$POORMAN_VERSION"
+    End
   End
 
   Describe "_check_deps()"
@@ -78,6 +138,13 @@ SCRIPT
       The output should equal "curl -X POST --write-out '$WRITE_OUT' --json '{\"name\":\"Ada\"}' 'https://example.test/api/users'"
     End
 
+    It "allows full http/https URLs to override BASE_URL"
+      DRY_RUN=1
+      BASE_URL=https://example.test/api/
+      When call POST "https://auth.example.test/oauth/token"
+      The output should equal "curl -X POST --write-out '$WRITE_OUT' 'https://auth.example.test/oauth/token'"
+    End
+
     run_two_dry_requests() {
       DRY_RUN=1
       GET "/first"
@@ -90,10 +157,24 @@ SCRIPT
       The line 2 of output should equal "curl -X GET --write-out '$WRITE_OUT' second"
     End
 
+    It "supports generic Request with custom HTTP method"
+      DRY_RUN=1
+      When call Request PURGE "/cache"
+      The output should equal "curl -X PURGE --write-out '$WRITE_OUT' cache"
+    End
+
+    It "fails when Request is missing method or endpoint"
+      When run Request PURGE
+      The status should equal 1
+      The output should include "expecting Request <METHOD> <endpoint>"
+    End
+
     Parameters
       PUT
       PATCH
       DELETE
+      HEAD
+      OPTIONS
     End
 
     It "supports $1"
@@ -109,6 +190,14 @@ SCRIPT
       CurlOptionGlobal --location --header "X-App: poorman"
       When call GET "/users"
       The output should equal "curl -X GET --write-out '$WRITE_OUT' --location --header 'X-App: poorman' users"
+    End
+
+    It "resets global options with CurlOptionGlobalReset"
+      DRY_RUN=1
+      CurlOptionGlobal --location --header "X-App: poorman"
+      CurlOptionGlobalReset
+      When call GET "/users"
+      The output should equal "curl -X GET --write-out '$WRITE_OUT' users"
     End
 
     run_second_after_first() {
@@ -152,7 +241,7 @@ SCRIPT
     It "rejects invalid commands"
       When run Skip NOPE "/users"
       The status should equal 1
-      The output should include "expecting GET|POST|PUT|PATCH|DELETE"
+      The output should include "expecting GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Request"
     End
 
     It "rejects missing command under set -u"
@@ -163,7 +252,7 @@ SCRIPT
 
       When run run_skip_without_args
       The status should equal 1
-      The output should include "expecting GET|POST|PUT|PATCH|DELETE"
+      The output should include "expecting GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Request"
     End
 
     It "allows skipping an Only request"
@@ -209,16 +298,16 @@ SCRIPT
 
       When run run_only_without_args
       The status should equal 1
-      The output should include "expecting GET|POST|PUT|PATCH|DELETE"
+      The output should include "expecting GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Request"
     End
   End
 
   Describe "hooks and response variables"
     curl() {
-      printf 'Response Body%s{"http_code":200,"method":"GET"}%s{"content-type":["application/json"]}' "$POORMAN_DELIM" "$POORMAN_DELIM"
+      printf '{"id":1}%s{"http_code":201,"method":"POST"}%s{"content-type":["application/json"]}' "$POORMAN_DELIM" "$POORMAN_DELIM"
     }
 
-    It "runs hooks and parses curl output"
+    It "runs hooks and sets response variables including HTTP_CODE"
       BeforeHook() {
         _hook_order="${_hook_order:-}before "
       }
@@ -228,14 +317,51 @@ SCRIPT
         printf '%s' "$BODY"
       }
 
-      When call GET "/users"
-      The output should equal "Response Body"
-      The variable BODY should equal "Response Body"
-      The variable META_JSON should equal '{"http_code":200,"method":"GET"}'
+      When call POST "/users"
+      The output should equal '{"id":1}'
+      The variable BODY should equal '{"id":1}'
+      The variable HTTP_CODE should equal 201
+      The variable META_JSON should equal '{"http_code":201,"method":"POST"}'
       The variable HEADER_JSON should equal '{"content-type":["application/json"]}'
-      The variable SNAPSHOT should equal "Response Body"
+      The variable SNAPSHOT should equal '{"id":1}'
       The variable EMPTY_RESULT should equal 0
       The variable _hook_order should equal "before after"
+    End
+  End
+
+  Describe "BodyJq()"
+    It "queries BODY with jq"
+      _has_jq=1
+      BODY='{"user":{"name":"Ada"}}'
+      When call BodyJq -r '.user.name'
+      The status should be success
+      The output should equal "Ada"
+    End
+
+    It "fails when jq is unavailable"
+      _has_jq=
+      BODY='{"user":{"name":"Ada"}}'
+      When run BodyJq '.user.name'
+      The status should equal 1
+      The output should include "[ jq ] is required"
+    End
+  End
+
+  Describe "HeaderJq()"
+    It "queries HEADER_JSON with jq"
+      _has_jq=1
+      HEADER_JSON='{"content-type":["application/json"]}'
+      When call HeaderJq -r '.["content-type"][0]'
+      The status should be success
+      The output should equal "application/json"
+    End
+
+    It "fails when jq is unavailable"
+      _has_jq=
+      HEADER_JSON='{"content-type":["application/json"]}'
+      When run HeaderJq '.["content-type"][0]'
+      The status should equal 1
+      The output should include "[ jq ] is required"
     End
   End
 
@@ -254,10 +380,19 @@ SCRIPT
 
     It "splits response using custom POORMAN_DELIM"
       POORMAN_DELIM="__CUSTOM_DELIM__"
-      When call _after_hook "body__CUSTOM_DELIM__{}__CUSTOM_DELIM__{}"
+      When call _after_hook 'body__CUSTOM_DELIM__{"http_code":204}__CUSTOM_DELIM__{}'
       The variable BODY should equal "body"
-      The variable META_JSON should equal "{}"
+      The variable HTTP_CODE should equal 204
+      The variable META_JSON should equal '{"http_code":204}'
       The variable HEADER_JSON should equal "{}"
+    End
+
+    It "builds rich SNAPSHOT with _std_jq_after_hook when jq is available"
+      _has_jq=1
+      When call _after_hook '{"id":1}__POORMAN_DELIM__{"http_code":200,"method":"GET"}__POORMAN_DELIM__{"content-type":["application/json"]}'
+      The variable SNAPSHOT should include "http_code"
+      The variable SNAPSHOT should include "content-type    application/json"
+      The variable SNAPSHOT should include '  "id": 1'
     End
   End
 
@@ -275,8 +410,77 @@ SCRIPT
       The status should be success
       The line 1 of contents of file "$script" should equal "#!/bin/sh"
       The line 2 of contents of file "$script" should equal "GET /users"
-      The line 3 of contents of file "$script" should equal ": <<'SNAPSHOT'"
+      The line 3 of contents of file "$script" should equal "Snapshot <<'SNAPSHOT'"
       The line 4 of contents of file "$script" should equal "saved body"
+      The line 5 of contents of file "$script" should equal "SNAPSHOT"
+    End
+
+    It "does not overwrite an existing Snapshot heredoc block when OVERWRITE_SNAPSHOT is not set"
+      script=$(make_temp_script snapshot_no_overwrite <<'SCRIPT'
+#!/bin/sh
+GET /users
+Snapshot <<'SNAPSHOT'
+old body line 1
+old body line 2
+SNAPSHOT
+POST /users
+SCRIPT
+)
+      _snapshot_0='updated body'
+
+      When call _replace_snapshots "$script"
+      The status should be success
+      The line 1 of contents of file "$script" should equal "#!/bin/sh"
+      The line 2 of contents of file "$script" should equal "GET /users"
+      The line 3 of contents of file "$script" should equal "Snapshot <<'SNAPSHOT'"
+      The line 4 of contents of file "$script" should equal "old body line 1"
+      The line 5 of contents of file "$script" should equal "old body line 2"
+      The line 6 of contents of file "$script" should equal "SNAPSHOT"
+      The line 7 of contents of file "$script" should equal "POST /users"
+    End
+
+    It "overwrites an existing Snapshot heredoc block when OVERWRITE_SNAPSHOT=1"
+      script=$(make_temp_script snapshot_update <<'SCRIPT'
+#!/bin/sh
+GET /users
+Snapshot <<'SNAPSHOT'
+old body line 1
+old body line 2
+SNAPSHOT
+POST /users
+SCRIPT
+)
+      OVERWRITE_SNAPSHOT=1
+      _snapshot_0='updated body'
+
+      When call _replace_snapshots "$script"
+      The status should be success
+      The line 1 of contents of file "$script" should equal "#!/bin/sh"
+      The line 2 of contents of file "$script" should equal "GET /users"
+      The line 3 of contents of file "$script" should equal "Snapshot <<'SNAPSHOT'"
+      The line 4 of contents of file "$script" should equal "updated body"
+      The line 5 of contents of file "$script" should equal "SNAPSHOT"
+      The line 6 of contents of file "$script" should equal "POST /users"
+    End
+
+    It "preserves an existing Snapshot heredoc block when its request was skipped even with OVERWRITE_SNAPSHOT=1"
+      script=$(make_temp_script snapshot_preserve <<'SCRIPT'
+#!/bin/sh
+GET /users
+Snapshot <<'SNAPSHOT'
+kept body
+SNAPSHOT
+SCRIPT
+)
+      OVERWRITE_SNAPSHOT=1
+      _snapshot_0=''
+
+      When call _replace_snapshots "$script"
+      The status should be success
+      The line 1 of contents of file "$script" should equal "#!/bin/sh"
+      The line 2 of contents of file "$script" should equal "GET /users"
+      The line 3 of contents of file "$script" should equal "Snapshot <<'SNAPSHOT'"
+      The line 4 of contents of file "$script" should equal "kept body"
       The line 5 of contents of file "$script" should equal "SNAPSHOT"
     End
 

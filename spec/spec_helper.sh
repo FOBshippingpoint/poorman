@@ -9,9 +9,11 @@ reset_poorman_state() {
   BASE_URL=
   DRY_RUN=
   ONLY=
+  OVERWRITE_SNAPSHOT=
   BODY=
   META_JSON=
   HEADER_JSON=
+  HTTP_CODE=
   SNAPSHOT=
   EMPTY_RESULT=
 
@@ -27,6 +29,11 @@ reset_poorman_state() {
   _snapshot_0=
   _snapshot_1=
   _has_jq=
+  _target_script=
+  _stdin_script=
+  _stdin_mode=
+  _runner_mode=
+  _POORMAN_LOADED=
 
   BeforeHook() { :; }
   AfterHook() { :; }

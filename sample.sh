@@ -10,6 +10,8 @@ BASE_URL=https://jsonplaceholder.typicode.com
 ONLY=
 # Set to 1 if you want to see the actual curl commands
 DRY_RUN=
+# Set to 1 if you want to overwrite existing snapshots
+OVERWRITE_SNAPSHOT=
 
 # /// curl options ///
 
@@ -34,7 +36,7 @@ GET /comments/$commentId
 # This line will replaced with the response body of previous request
 Snapshot
 # Like this:
-# : <<'SNAPSHOT'
+# Snapshot <<'SNAPSHOT'
 # http_code        200
 # method           GET
 # size_download    268

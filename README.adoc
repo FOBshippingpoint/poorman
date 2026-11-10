@@ -59,11 +59,14 @@ GET /users/1
 POST /users --json '{"name": "New User"}'
 ----
 
-.  **Run the script:** Execute your script from the terminal.
+.  **Run the script:** Execute your script from the terminal, pass it to `poorman.sh`, or pipe it via `stdin` (e.g. `:'<,'>!./poorman.sh` in Vim for inline replacement).
 +
 [source,sh]
 ----
 ./my_api.sh
+# or without sourcing poorman.sh inside my_api.sh:
+./poorman.sh my_api.sh
+cat my_api.sh | ./poorman.sh
 ----
 
 .  **Snapshot Responses:** You can add `Snapshot` after the request. Run the script again, and the response will be captured and embedded directly into the script. This allows you to "record" the server's response (like https://learning.postman.com/docs/sending-requests/response-data/examples/[Postman's example]).
@@ -79,7 +82,7 @@ After running the script, it will become:
 [source,sh]
 ----
 GET /users/1
-: <<'SNAPSHOT'
+Snapshot <<'SNAPSHOT'
 http_code        200
 method           GET
 size_download    509
@@ -98,7 +101,7 @@ SNAPSHOT
 +
 [TIP]
 ====
-The `:` is the shell builtin that almost do nothing. Combined with here-document (`<<'SNAPSHOT'`), we can have the comment without preceding `#`.
+Combined with a single-quoted here-document (`<<'SNAPSHOT'`), `Snapshot` acts as a self-updating multiline comment block without needing preceding `#` characters.
 ====
 
 === Example
@@ -118,6 +121,8 @@ BASE_URL=https://jsonplaceholder.typicode.com
 ONLY=
 # Set to 1 if you want to see the actual curl commands
 DRY_RUN=
+# Set to 1 if you want to overwrite existing snapshots
+OVERWRITE_SNAPSHOT=
 
 # /// curl options ///
 
@@ -142,7 +147,7 @@ GET /comments/$commentId
 # This line will replaced with the response body of previous request
 Snapshot
 # Like this:
-# : <<'SNAPSHOT'
+# Snapshot <<'SNAPSHOT'
 # http_code        200
 # method           GET
 # size_download    268
@@ -191,7 +196,7 @@ Snapshot
 | Name | Description | Example
 
 | `BASE_URL`
-| The prefix of all request URLs. A trailing slash (`/`) is optional.
+| The prefix of all request URLs. A trailing slash (`/`) is optional. Full `http://` or `https://` request URLs ignore `BASE_URL`.
 | https://example.com
 
 | `DRY_RUN`
@@ -200,6 +205,10 @@ Snapshot
 
 | `ONLY`
 | Set to `1` to only run the requests starts with `Only`.
+| 0/1
+
+| `OVERWRITE_SNAPSHOT`
+| Set to `1` to overwrite existing `Snapshot <<'SNAPSHOT'` blocks with the latest response.
 | 0/1
 
 |===
@@ -268,6 +277,30 @@ a|
 DELETE /posts --url-param 'user=1'
 ----
 
+| `HEAD <path> [curl_options...]`
+| Sends a HEAD request.
+a|
+[source,sh]
+----
+HEAD /posts/1
+----
+
+| `OPTIONS <path> [curl_options...]`
+| Sends an OPTIONS request.
+a|
+[source,sh]
+----
+OPTIONS /posts
+----
+
+| `Request <METHOD> <path> [curl_options...]`
+| Sends a request with a custom HTTP method.
+a|
+[source,sh]
+----
+Request PURGE /cache
+----
+
 |===
 
 #### Variables
@@ -279,16 +312,41 @@ DELETE /posts --url-param 'user=1'
 | `BODY`
 | The response body of latest request.
 
+| `HTTP_CODE`
+| The HTTP status code of latest request.
+
 | `META_JSON`
-| All curl write-out variables in json format of latest request. (`%{json}`)
+| All curl write-out variables in json format of latest request. (https://curl.se/docs/manpage.html#-w[`%{json}`])
 
 | `HEADER_JSON`
-| curl write-out headers in json format of latest request. (`%{header_json}`)
+| curl write-out headers in json format of latest request. (https://curl.se/docs/manpage.html#-w[`%{header_json}`])
 
 | `SNAPSHOT`
 | The content that will be used for constructing `Snapshot`. Set `SNAPSHOT` to create custom snapshots in `AfterHook`.
 
 |===
+
+#### Helpers
+
+===== `BodyJq [jq_options...] <filter>`
+Queries the latest response `BODY` using `jq`.
+
+*Example:*
+[source,sh]
+----
+POST /login --json '{"user": "admin"}'
+token=$(BodyJq -r '.token')
+----
+
+===== `HeaderJq [jq_options...] <filter>`
+Queries the latest response `HEADER_JSON` using `jq`.
+
+*Example:*
+[source,sh]
+----
+GET /users/1
+contentType=$(HeaderJq -r '.["content-type"][0]')
+----
 
 
 === Modifier
@@ -315,9 +373,21 @@ CurlOptionGlobal --location
 GET /some/path
 ----
 
+==== `CurlOptionGlobalReset`
+Clears all global `curl` options previously set by `CurlOptionGlobal`.
+
+*Example:*
+[source,sh]
+----
+CurlOptionGlobal --header "Authorization: Bearer $token"
+GET /private
+CurlOptionGlobalReset
+GET /public
+----
+
 ==== `Snapshot`
 
-Captures previous request result and replace itself.
+Captures previous request result and replaces itself with `Snapshot <<'SNAPSHOT' ... SNAPSHOT`. Set `OVERWRITE_SNAPSHOT=1` to update existing snapshots on subsequent runs.
 
 [source,sh]
 ----
@@ -330,7 +400,7 @@ After running the script, it will become:
 [source,sh]
 ----
 GET /users/1
-: <<'SNAPSHOT'
+Snapshot <<'SNAPSHOT'
 http_code        200
 method           GET
 size_download    509
@@ -392,7 +462,7 @@ A function that is executed after each enabled request. This is useful for proce
 ----
 AfterHook() {
   # Pretty-print JSON response using jq
-  jq -n --argjson body "$BODY" '$body'
+  BodyJq '.'
 }
 ----
 
